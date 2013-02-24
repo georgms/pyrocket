@@ -28,7 +28,7 @@ class RocketWindow:
 
 	# ===============================
 
-	def __init__(self, run_installed=True):
+	def __init__(self, run_installed=False):
 
 		self.joystick_state = StatefulJoystick()
 #		self.joystick_state = None
@@ -409,6 +409,7 @@ class RocketWindow:
 	def connect_everything(self):
 
 		self.rocket_controller = RocketManager()
+		self.video.set_rocket_frontend(self)
 	
 		err_msg = self.rocket_controller.acquire_devices()
 		if err_msg:

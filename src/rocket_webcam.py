@@ -4,6 +4,7 @@ import cv
 from pygtk import require
 require('2.0')
 import gtk, gobject
+import time
 
 # ==================================
 
@@ -57,13 +58,19 @@ class VideoWindow(gtk.Frame):
 		self.faces = []
 		self.previous_face = None
 
+		# remember the last movement direction to be able to consistently move in 1 direction		
+		self.last_movement = None
+
 		master_vbox.show_all()
+		
+	def set_rocket_frontend(self, rocket_frontend):
+		self.rocket_frontend = rocket_frontend
 
 	# -----------------------------------
 
 	def start_video(self):
 
-		device = 0
+		device = 1
 		self.start_capture(device)
 		self.initialize_video()
 
@@ -153,31 +160,11 @@ class VideoWindow(gtk.Frame):
 			self.previous_face = face
 			self.mark_face(face, self.display_frame)
 			
-			face_x = face[0] + face[2] / 2
-			face_y = face[1] + face[3] / 2
-			
-			center_x = self.display_frame.width / 2
-			center_y = self.display_frame.height / 2
-			
-			(diff_x, diff_y) = self.get_diff_vector((face_x, face_y), (center_x, center_y))
-			
-			DOWN = 0
-			UP = 1
-			LEFT = 2
-			RIGHT = 3
-			
-			#if diff_x > 0:
-			#	#self.rocket_frontend.movement_wrapper(2)
-			#	print "turn left"
-			#if diff_x < 0:
-			#	#self.rocket_frontend.movement_wrapper(3)
-			#	print "turn right"
-			#if diff_y > 0:
-			#	#self.rocket_frontend.movement_wrapper(0)
-			#	print "turn down"
-			#if diff_y < 0:
-			#	#self.rocket_frontend.movement_wrapper(1)
-			#	print "turn up"
+			center = (self.display_frame.width / 2, self.display_frame.height / 2)
+			target = (face[0] + face[2] / 2, face[1] + face[3])
+			self.center_target(center, target)
+		else:
+			self.rocket_frontend.movement_wrapper(5)
 			
 		self.faces = faces
 				
@@ -202,32 +189,43 @@ class VideoWindow(gtk.Frame):
 		offset_x = 0
 		offset_y = 0
 		
+		scale_factor = 1.2
+		min_neighbors = 2
+		
 		if previous_face != None:
+
+			# extract a part of the original image that surrounds the previous face			
 			area_of_interest = self.find_area_of_interest(previous_face, (input_image.width, input_image.height))
-
 			input_image = cv.GetSubRect(input_image, area_of_interest)
-			cv.ShowImage('focus', input_image)
-
+			
 			# the coordinates of the detected faces need to offset as the detection is based on a sub-section of the original image			
 			offset_x = area_of_interest[0]
 			offset_y = area_of_interest[1]
 
-		scale_factor = 1.2
-		min_neighbors = 2
+		cv.ShowImage('focus', input_image)
 		
+		begin_face_detection = int(round(time.time() * 1000))
 		faces = cv.HaarDetectObjects(input_image, self.cascade, self.storage, scale_factor, min_neighbors, cv.CV_HAAR_DO_CANNY_PRUNING)
+		end_face_detection = int(round(time.time() * 1000))
 		
-		offset_faces = []
-		
-		for face in faces:
-			position = face[0]
-			neighbors = face[1]
-			offset_position = (position[0] + offset_x, position[1] + offset_y, position[2], position[3])
+		print 'face detection took [ms]', end_face_detection - begin_face_detection
+
+		# Offset the detected faces if necessary
+		if offset_x > 0 or offset_y > 0:
+					
+			offset_faces = []
 			
-			offset_face = (offset_position, neighbors)
-			offset_faces.append(offset_face)
+			for face in faces:
+				position = face[0]
+				neighbors = face[1]
+				offset_position = (position[0] + offset_x, position[1] + offset_y, position[2], position[3])
+				
+				offset_face = (offset_position, neighbors)
+				offset_faces.append(offset_face)
+			
+			faces = offset_faces
 		
-		return offset_faces
+		return faces
 
 	def find_area_of_interest(self, previous_face, max_dimensions):
 		""" Find the area of interest by calculating a rectangle around a previously detected face """
@@ -240,7 +238,7 @@ class VideoWindow(gtk.Frame):
 		previous_face_center_x = previous_face_left + previous_face_width / 2
 		previous_face_center_y = previous_face_top + previous_face_height / 2
 		
-		# focus on the are where the last face was detected, extend the area by clip_scale in all directions (0 = no extension)
+		# focus on the are where the last face was detected, extend the area by extend_factor in all directions (0 = no extension)
 		extend_factor = 1.0
 
 		# how far in pixels to extend to the left/right and top/bottom		
@@ -298,3 +296,43 @@ class VideoWindow(gtk.Frame):
 		diff_x = point1[0] - point2[0]
 		diff_y = point1[1] - point2[1]
 		return (diff_x, diff_y)
+	
+	def center_target(self, center, target):
+		""" Rotate / Tilt the rocket launcher so that the target gets in the center of the view """
+		 
+		diff = self.get_diff_vector(target, center)
+		
+		DOWN = 0
+		UP = 1
+		LEFT = 2
+		RIGHT = 3
+		
+		STOP = 5
+		
+		print 'diff', diff, self.last_movement
+		
+		# move only when the diff is bigger than this to avoid jumping around the center
+		movement_threshold = 25
+		
+		if self.rocket_frontend:
+			
+			if (self.last_movement == None or self.last_movement == LEFT) and diff[0] < -movement_threshold:
+				self.rocket_frontend.movement_wrapper(LEFT)
+				self.last_movement = LEFT
+				print "turn left"
+			elif (self.last_movement == None or self.last_movement == RIGHT) and diff[0] > movement_threshold:
+				self.rocket_frontend.movement_wrapper(RIGHT)
+				self.last_movement = RIGHT
+				print "turn right"
+			elif (self.last_movement == None or self.last_movement == DOWN) and diff[1] > movement_threshold:
+				self.rocket_frontend.movement_wrapper(DOWN)
+				self.last_movement = DOWN
+				print "turn down"
+			elif (self.last_movement == None or self.last_movement == UP) and diff[1] < -movement_threshold:
+				self.rocket_frontend.movement_wrapper(UP)
+				self.last_movement = UP
+				print "turn up"
+			else:
+				print "Stop all engines"
+				self.rocket_frontend.movement_wrapper(STOP)
+				self.last_movement = None
