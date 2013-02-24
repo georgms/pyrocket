@@ -5,6 +5,7 @@ from pygtk import require
 require('2.0')
 import gtk, gobject
 import time
+import logging
 
 # ==================================
 
@@ -60,6 +61,8 @@ class VideoWindow(gtk.Frame):
 
 		# remember the last movement direction to be able to consistently move in 1 direction		
 		self.last_movement = None
+		
+		logging.basicConfig(level=logging.DEBUG)
 
 		master_vbox.show_all()
 		
@@ -147,9 +150,9 @@ class VideoWindow(gtk.Frame):
 		# See if the face count changed, if so display a message
 		if len(self.faces) != len(faces):
 			if len(faces) == 0:
-				print "No faces found"
+				logging.info("No faces found")
 			else:
-				print "Found " + str(len(faces)) + " faces"
+				logging.info("Found %s faces", len(faces))
 				
 		self.previous_face = None
 			
@@ -193,6 +196,8 @@ class VideoWindow(gtk.Frame):
 		min_neighbors = 2
 		
 		if previous_face != None:
+			
+			logging.debug("Using previous face as basis for detection")
 
 			# extract a part of the original image that surrounds the previous face			
 			area_of_interest = self.find_area_of_interest(previous_face, (input_image.width, input_image.height))
@@ -208,7 +213,7 @@ class VideoWindow(gtk.Frame):
 		faces = cv.HaarDetectObjects(input_image, self.cascade, self.storage, scale_factor, min_neighbors, cv.CV_HAAR_DO_CANNY_PRUNING)
 		end_face_detection = int(round(time.time() * 1000))
 		
-		print 'face detection took [ms]', end_face_detection - begin_face_detection
+		logging.debug('face detection took %s ms', end_face_detection - begin_face_detection)
 
 		# Offset the detected faces if necessary
 		if offset_x > 0 or offset_y > 0:
@@ -309,7 +314,7 @@ class VideoWindow(gtk.Frame):
 		
 		STOP = 5
 		
-		print 'diff', diff, self.last_movement
+		logging.debug('Diff from target to center is %s, last movement was %s', diff, self.last_movement)
 		
 		# move only when the diff is bigger than this to avoid jumping around the center
 		movement_threshold = 25
@@ -319,20 +324,20 @@ class VideoWindow(gtk.Frame):
 			if (self.last_movement == None or self.last_movement == LEFT) and diff[0] < -movement_threshold:
 				self.rocket_frontend.movement_wrapper(LEFT)
 				self.last_movement = LEFT
-				print "turn left"
+				logging.debug("Moving left")
 			elif (self.last_movement == None or self.last_movement == RIGHT) and diff[0] > movement_threshold:
 				self.rocket_frontend.movement_wrapper(RIGHT)
 				self.last_movement = RIGHT
-				print "turn right"
+				logging.debug("Moving right")
 			elif (self.last_movement == None or self.last_movement == DOWN) and diff[1] > movement_threshold:
 				self.rocket_frontend.movement_wrapper(DOWN)
 				self.last_movement = DOWN
-				print "turn down"
+				logging.debug("Moving down")
 			elif (self.last_movement == None or self.last_movement == UP) and diff[1] < -movement_threshold:
 				self.rocket_frontend.movement_wrapper(UP)
 				self.last_movement = UP
-				print "turn up"
-			else:
-				print "Stop all engines"
+				logging.debug("Moving up")
+			elif self.last_movement != None:
 				self.rocket_frontend.movement_wrapper(STOP)
 				self.last_movement = None
+				logging.debug("Stopping all engines")
