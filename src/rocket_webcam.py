@@ -55,6 +55,7 @@ class VideoWindow(gtk.Frame):
 		self.threshold = 0
 		
 		self.faces = []
+		self.previous_face = None
 
 		master_vbox.show_all()
 
@@ -134,8 +135,7 @@ class VideoWindow(gtk.Frame):
 			cv.ConvertImage(webcam_frame, webcam_frame, cv.CV_CVTIMG_FLIP)
 		cv.ConvertImage(webcam_frame, self.display_frame, cv.CV_CVTIMG_SWAP_RB)
 
-		# detect faces
-		faces = cv.HaarDetectObjects(self.display_frame, self.cascade, self.storage, 1.2, 2, cv.CV_HAAR_DO_CANNY_PRUNING)
+		faces = self.detect_faces(self.display_frame, self.previous_face)
 		
 		# See if the face count changed, if so display a message
 		if len(self.faces) != len(faces):
@@ -143,10 +143,41 @@ class VideoWindow(gtk.Frame):
 				print "No faces found"
 			else:
 				print "Found " + str(len(faces)) + " faces"
+				
+		self.previous_face = None
 			
 		if len(faces) == 1:
-			face = faces[0]
+			
+			# faces[0] is the first detected face, faces[0][0] is the position tuple of the first detected face
+			face = faces[0][0]
+			self.previous_face = face
 			self.mark_face(face, self.display_frame)
+			
+			face_x = face[0] + face[2] / 2
+			face_y = face[1] + face[3] / 2
+			
+			center_x = self.display_frame.width / 2
+			center_y = self.display_frame.height / 2
+			
+			(diff_x, diff_y) = self.get_diff_vector((face_x, face_y), (center_x, center_y))
+			
+			DOWN = 0
+			UP = 1
+			LEFT = 2
+			RIGHT = 3
+			
+			#if diff_x > 0:
+			#	#self.rocket_frontend.movement_wrapper(2)
+			#	print "turn left"
+			#if diff_x < 0:
+			#	#self.rocket_frontend.movement_wrapper(3)
+			#	print "turn right"
+			#if diff_y > 0:
+			#	#self.rocket_frontend.movement_wrapper(0)
+			#	print "turn down"
+			#if diff_y < 0:
+			#	#self.rocket_frontend.movement_wrapper(1)
+			#	print "turn up"
 			
 		self.faces = faces
 				
@@ -164,15 +195,75 @@ class VideoWindow(gtk.Frame):
 
 
 		return self.video_enabled_button.get_active()
+	
+	def detect_faces(self, input_image, previous_face = None):
+		""" Detect a face in the given input_image, optionally provide a previous_face to speed up detection """
+		
+		offset_x = 0
+		offset_y = 0
+		
+		if previous_face != None:
+			area_of_interest = self.find_area_of_interest(previous_face, (input_image.width, input_image.height))
 
+			input_image = cv.GetSubRect(input_image, area_of_interest)
+			cv.ShowImage('focus', input_image)
+
+			# the coordinates of the detected faces need to offset as the detection is based on a sub-section of the original image			
+			offset_x = area_of_interest[0]
+			offset_y = area_of_interest[1]
+
+		scale_factor = 1.2
+		min_neighbors = 2
+		
+		faces = cv.HaarDetectObjects(input_image, self.cascade, self.storage, scale_factor, min_neighbors, cv.CV_HAAR_DO_CANNY_PRUNING)
+		
+		offset_faces = []
+		
+		for face in faces:
+			position = face[0]
+			neighbors = face[1]
+			offset_position = (position[0] + offset_x, position[1] + offset_y, position[2], position[3])
+			
+			offset_face = (offset_position, neighbors)
+			offset_faces.append(offset_face)
+		
+		return offset_faces
+
+	def find_area_of_interest(self, previous_face, max_dimensions):
+		""" Find the area of interest by calculating a rectangle around a previously detected face """
+		
+		previous_face_left = previous_face[0]
+		previous_face_top = previous_face[1]
+		previous_face_width = previous_face[2]
+		previous_face_height = previous_face[3]
+		
+		previous_face_center_x = previous_face_left + previous_face_width / 2
+		previous_face_center_y = previous_face_top + previous_face_height / 2
+		
+		# focus on the are where the last face was detected, extend the area by clip_scale in all directions (0 = no extension)
+		extend_factor = 1.0
+
+		# how far in pixels to extend to the left/right and top/bottom		
+		extend_x = previous_face_width * extend_factor
+		extend_y = previous_face_height * extend_factor
+		
+		# calculate the area of interest's coordinates
+		area_of_interest_left = int(round(max(0, previous_face_center_x - extend_x)))
+		area_of_interest_right = int(round(min(max_dimensions[0], previous_face_center_x + extend_x)))
+		area_of_interest_top = int(round(max(0, previous_face_center_y - extend_y)))
+		area_of_interest_bottom = int(round(min(max_dimensions[1], previous_face_center_y + extend_y)))
+		
+		area_of_interest = (area_of_interest_left, area_of_interest_top, area_of_interest_right - area_of_interest_left, area_of_interest_bottom - area_of_interest_top)
+		return area_of_interest
+		
+		
 	def mark_face(self, face, inputImage):
 		""" Mark the given face in the given inputImage """
 		
-		position = face[0]
-		left = position[0]
-		top = position[1]
-		right = left + position[2]
-		bottom = top + position[3]
+		left = face[0]
+		top = face[1]
+		right = left + face[2]
+		bottom = top + face[3]
 		
 		# Mark the face
 		color = (0, 255, 0)
@@ -196,8 +287,14 @@ class VideoWindow(gtk.Frame):
 			8,
 			0)
 		
-		diffX = centerX - inputImage.width / 2
-		diffY = centerY - inputImage.height / 2
+		(diff_x, diff_y) = self.get_diff_vector((centerX, centerY), (self.display_frame.width / 2, self.display_frame.height / 2))
 		
 		# Draw a line from the center of the face to the center of the image as an indication how to move the launcher
 		cv.Line(inputImage, (centerX, centerY), (inputImage.width / 2, inputImage.height / 2), color, thickness, lineType, shift)
+		
+	def get_diff_vector(self, point1, point2):
+		""" Get the vector between two points """
+		
+		diff_x = point1[0] - point2[0]
+		diff_y = point1[1] - point2[1]
+		return (diff_x, diff_y)
