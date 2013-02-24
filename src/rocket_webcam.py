@@ -48,6 +48,13 @@ class VideoWindow(gtk.Frame):
 
 		self.capture = None
 
+		self.cascade = cv.Load('haarcascade_frontalface_alt.xml')
+		# create storage
+		self.storage = cv.CreateMemStorage(0)
+		
+		self.threshold = 0
+		
+		self.faces = []
 
 		master_vbox.show_all()
 
@@ -127,34 +134,22 @@ class VideoWindow(gtk.Frame):
 			cv.ConvertImage(webcam_frame, webcam_frame, cv.CV_CVTIMG_FLIP)
 		cv.ConvertImage(webcam_frame, self.display_frame, cv.CV_CVTIMG_SWAP_RB)
 
-
-
-
-		if False:
-			# PROCESS WEBCAM FRAME HERE...
-			inputImage = cv.CreateImage((webcam_frame), cv.IPL_DEPTH_8U, 1)
-			cv.CvtColor(webcam_frame, inputImage, cv.CV_RGB2GRAY);
-
-			cv.Threshold(inputImage, inputImage, 128, 255, cv.CV_THRESH_BINARY)
-
-			mysize = cv.GetSize(webcam_frame)
-			height = mysize.height
-			width = mysize.width
-
-
-			# Find horizontal first-moment:
-			if False:
-				mysum = 0
-				for i in range(height):
-					mysum += sum(inputImage[i,:])
-
-				print "Sum:", mysum
-
-			cv.Merge( inputImage, inputImage, inputImage, None, self.display_frame )
-
-
-
-
+		# detect faces
+		faces = cv.HaarDetectObjects(self.display_frame, self.cascade, self.storage, 1.2, 2, cv.CV_HAAR_DO_CANNY_PRUNING)
+		
+		# See if the face count changed, if so display a message
+		if len(self.faces) != len(faces):
+			if len(faces) == 0:
+				print "No faces found"
+			else:
+				print "Found " + str(len(faces)) + " faces"
+			
+		if len(faces) == 1:
+			face = faces[0]
+			self.mark_face(face, self.display_frame)
+			
+		self.faces = faces
+				
 		incoming_pixbuf = gtk.gdk.pixbuf_new_from_data(
 				self.display_frame.tostring(),
 				gtk.gdk.COLORSPACE_RGB,
@@ -170,3 +165,39 @@ class VideoWindow(gtk.Frame):
 
 		return self.video_enabled_button.get_active()
 
+	def mark_face(self, face, inputImage):
+		""" Mark the given face in the given inputImage """
+		
+		position = face[0]
+		left = position[0]
+		top = position[1]
+		right = left + position[2]
+		bottom = top + position[3]
+		
+		# Mark the face
+		color = (0, 255, 0)
+		thickness = 1
+		lineType = 8
+		shift = 0
+		cv.Rectangle(inputImage, (left, top), (right, bottom), color, thickness, lineType, shift)
+		
+		centerX = right - (right - left) / 2
+		centerY = bottom - (bottom - top) / 2
+		
+		# Mark the center of the face
+		radius = 5 
+		cv.Circle(inputImage, (centerX, centerY), radius, color, thickness, lineType, shift)
+		
+		cv.Rectangle(inputImage,
+			(left, top),
+			(right, bottom),
+			(0, 255, 0),
+			3,
+			8,
+			0)
+		
+		diffX = centerX - inputImage.width / 2
+		diffY = centerY - inputImage.height / 2
+		
+		# Draw a line from the center of the face to the center of the image as an indication how to move the launcher
+		cv.Line(inputImage, (centerX, centerY), (inputImage.width / 2, inputImage.height / 2), color, thickness, lineType, shift)
